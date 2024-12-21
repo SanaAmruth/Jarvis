@@ -1,0 +1,11 @@
+unifyai
+pyttsx3
+opencv-python
+numpy
+python-dotenv
+openwakeword
+pyaudio
+argparse
+tensorflow
+transformers
+bitsandbytes
