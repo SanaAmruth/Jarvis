@@ -18,7 +18,7 @@ load_dotenv()
 oww.utils.download_models(['Hey Jarvis'])
 
 # Access the API key
-api_key = os.getenv('API_KEY')
+api_key = os.getenv('UNIFY_API_KEY')
 
 # Configuration
 UNIFY_API_KEY = api_key
@@ -80,12 +80,30 @@ def capture_image():
         raise RuntimeError("Failed to capture image.")
 
 def is_visual_query(query):
-    """Determine if the query requires visual input."""
-    return False
+    """Determine if the query requires visual input using Unify API."""
+    print(f"Checking if visual information is needed for query: {query}")
+    try:
+        client = unify.Unify("gpt-4o-mini@openai", api_key=UNIFY_API_KEY)
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Does the following query need an image to answer?\nQuery: {query}\nRespond with 'Yes' or 'No'"}
+                ],
+            }
+        ]
+
+        response = client.generate(messages=messages, max_completion_tokens=1)
+        print(f"Visual query decision: {response}")
+        return "Yes" in response
+    except Exception as e:
+        print(f"Error checking visual query: {e}")
+        return False
 
 def process_query(query, image_path=None):
     """Process the query using Unify API."""
-    client = unify.Unify("gpt-4o@openai", api_key=UNIFY_API_KEY)
+    client = unify.Unify("gpt-4o-mini@openai", api_key=UNIFY_API_KEY)
     messages = [{"role": "system", "content": "Provide precise and accurate answers."}]
     
     if image_path:
@@ -95,6 +113,7 @@ def process_query(query, image_path=None):
             "role": "user",
             "content": [{"type": "text", "text": query}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"}}],
         })
+        os.remove(image_path)
     else:
         messages.append({"role": "user", "content": [{"type": "text", "text": query}]})
     
