@@ -15,6 +15,9 @@ import speech_recognition as sr
 # Load .env file
 load_dotenv()
 
+# Download models needed for tests
+oww.utils.download_models(['Hey Jarvis'])
+
 # Access the API key
 api_key = os.getenv('API_KEY')
 
@@ -31,9 +34,8 @@ tts_engine.setProperty('rate', 155)
 tts_engine.setProperty('volume', 0.9)
 # tts_engine.setProperty('voice', 'com.apple.speech.synthesis.voice.Samantha')
 
-
 # Set model path
-model_path = "hey_jarvis_v0.1.onnx"
+model_path = "hey jarvis"
 
 # Initialize OpenWakeWord model
 oww_model = Model(wakeword_models=[model_path], inference_framework='onnx')
@@ -53,20 +55,30 @@ def speak(text):
 
 def detect_wake_word():
     """Detect the wake word using OpenWakeWord."""
-    print("Listening for wake word...")
-    while True:
-        audio_data = np.frombuffer(mic_stream.read(CHUNK_SIZE), dtype=np.int16)
-        
-        # Feed to OpenWakeWord model
-        prediction = oww_model.predict(audio_data)
-        
-        # Check if the wake word is detected
-        for mdl in oww_model.prediction_buffer.keys():
-            scores = list(oww_model.prediction_buffer[mdl])
-            # print(scores)
-            if scores[-1] > 0.3:  # Wake word detected with score > 0.5
-                print("Wake word detected.")
-                return
+    print("🔊 Listening for wake word, listening for your query...")
+    try:
+        while True:
+            # Read audio data from the stream
+            raw_data = mic_stream.read(CHUNK_SIZE, exception_on_overflow=False)
+
+            # Convert the audio data into a NumPy array
+            audio_data = np.frombuffer(raw_data, dtype=np.int16)
+
+            del raw_data
+
+            # Feed to OpenWakeWord model
+            oww_model.predict(audio_data)
+
+            # Check if the wake word is detected
+            for mdl in oww_model.prediction_buffer.keys():
+                scores = list(oww_model.prediction_buffer[mdl])
+                # print(f"Wake word detection scores: {scores}")
+                if scores[-1] > 0.3:  # Wake word detected with score > 0.3
+                    oww_model.prediction_buffer[mdl].clear()
+                    print("🎤 Wake word detected!")
+                    return
+    except Exception as e:
+        print(f"❌ Error while detecting wake word: {e}")
 
 def capture_image():
     """Capture an image using the device camera."""
@@ -76,19 +88,18 @@ def capture_image():
         image_path = "captured_image.jpg"
         cv2.imwrite(image_path, frame)
         cap.release()
+        print("📸 Image captured successfully.")
         return image_path
     else:
         cap.release()
-        raise RuntimeError("Failed to capture image.")
+        raise RuntimeError("❌ Failed to capture image.")
 
 def is_visual_query(query):
     """Determine if the query requires visual input using Unify API."""
-    # client = unify.Unify("gpt-4o-mini@openai", api_key=UNIFY_API_KEY)
-    print("Checking if visual information is needed or not")
-    # client = unify.Unify("gemini-1.5-flash@openai", api_key=UNIFY_API_KEY)bH5V13s+e8JVZPv3+i4TRZOsNVTsriJvXkEwlSsA2-Q=
-    # client = unify.Unify("gemini-1.5-flash@openai", api_key="bH5V13s+e8JVZPv3+i4TRZOsNVTsriJvXkEwlSsA2-Q=")
+    return False
+    # print(f"🔍 Checking if visual information is needed for query: {query}")
+    return False
     client = unify.Unify("gpt-4o@openai", api_key=UNIFY_API_KEY)
-
     messages = [
         {
             "role": "user",
@@ -98,12 +109,12 @@ def is_visual_query(query):
         }
     ]
     response = client.generate(messages=messages, max_completion_tokens=3)
-    print(response)
-    # decision = response.get("choices", [{}])[0].get("text", "").strip().lower()
+    print(f"🤖 Visual query decision: {response}")
     return "yes" in response
 
 def process_query(query, image_path=None):
     """Process the query using Unify API, optionally with an image."""
+    print(f"🤖 Processing query: {query}")
     client = unify.Unify("gpt-4o@openai", api_key=UNIFY_API_KEY)  # Specify the model name
     if image_path:
         # Encode the image as base64
@@ -112,6 +123,10 @@ def process_query(query, image_path=None):
         
         # Prepare the messages payload
         messages = [
+            {
+                "role": "system",
+                "content": "Provide precise and accurate answers without unnecessary elaboration."
+            },
             {
                 "role": "user",
                 "content": [
@@ -129,6 +144,10 @@ def process_query(query, image_path=None):
         # Prepare the messages payload for text-only queries
         messages = [
             {
+                "role": "system",
+                "content": "Provide precise and accurate answers without unnecessary elaboration."
+            },
+            {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": query}
@@ -140,52 +159,62 @@ def process_query(query, image_path=None):
     try:
         response = client.generate(
             messages=messages,
-            max_completion_tokens=300
+            max_completion_tokens=150  # Adjust token limit for shorter responses
         )
-        print(response)
-        # Extract the generated response text
-        # return response.get("choices", [{}])[0].get("text", "").strip()
+        print(f"💬 Response: {response}")
         return response
     except Exception as e:
-        print(f"Error while processing query: {e}")
-        return "Sorry, I encountered an error while processing your request."
+        print(f"❌ Error while processing query: {e}")
+        return "❌ Sorry, I encountered an error while processing your request."
 
 def main():
+    global mic_stream  # Use the global mic_stream to manage its state
+
     while True:  # Outer loop to keep listening for wake word
-        # Detect the wake word first
-        detect_wake_word()
-        print("Wake word detected. \n *********Listening for query*********")
+        try:
+            # Detect the wake word first
+            detect_wake_word()
+            # print("🎧 Wake word detected! \n❗ Listening for your query...")
 
-        time.sleep(1.5)
+            time.sleep(1.5)
 
-        speak("Hi Mr.Sana, How may I help you today")
+            recognizer = sr.Recognizer()
+            with sr.Microphone(device_index=AUDIO_DEVICE_INDEX) as source:
+                try:
+                    # Listen for the query
+                    audio = recognizer.listen(source)
+                    query = recognizer.recognize_google(audio)
+                    print(f"📝 Query received: {query}")
 
-        recognizer = sr.Recognizer()
-        with sr.Microphone(device_index=AUDIO_DEVICE_INDEX) as source:
-            try:
-                audio = recognizer.listen(source)
-                query = recognizer.recognize_google(audio)
-                print(f"Query: {query}")
+                    # Check if query requires an image
+                    if is_visual_query(query):
+                        print("🔲 Visual input required. Capturing image...")
+                        image_path = capture_image()
+                        print("💡 Processing query with image...")
+                        response = process_query(query, image_path)
+                    else:
+                        print("💬 Processing query with text only...")
+                        response = process_query(query)
 
-                # Check if query requires an image
-                if is_visual_query(query):
-                    print("Visual input required. Capturing image...")
-                    image_path = capture_image()
-                    print("Processing query with image...")
-                    response = process_query(query, image_path)
-                else:
-                    print("Processing query with text only...")
-                    response = process_query(query)
+                    # Speak the response
+                    # print(f"💬 Response: {response}")
+                    speak(response)
 
-                # Speak the response
-                print(f"Response: {response}")
-                speak(response)
+                except sr.UnknownValueError:
+                    print("❌ Could not understand audio, listening again.")
+                    continue
+                except Exception as e:
+                    print(f"❌ Error during query handling: {e}")
+                    continue
 
-            except sr.UnknownValueError:
-                speak("Sorry, I didn't catch that.")
-            except Exception as e:
-                print(f"Error: {e}")
-
+        except OSError as e:
+            # Handle stream errors and reset if necessary
+            if e.args[0] == -9988:  # Stream closed
+                print("🔄 Stream closed. Reinitializing...")
+                mic_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK_SIZE)
+            else:
+                print(f"❌ Unexpected audio error: {e}")
+                break
 
 if __name__ == "__main__":
     main()
