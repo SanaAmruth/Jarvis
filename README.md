@@ -122,8 +122,8 @@ Common issues and solutions:
 
 Planned upgrades include:
 
-- Advanced image query handling with computer vision models.
-- Home automation system integration.
+- Advanced image query handling using multimodal models
+- Play songs like Alexa
 
 ---
 
