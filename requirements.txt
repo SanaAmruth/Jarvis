@@ -9,3 +9,4 @@ argparse
 tensorflow
 transformers
 bitsandbytes
+SpeechRecognition
