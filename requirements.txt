@@ -10,3 +10,5 @@ tensorflow
 transformers
 bitsandbytes
 SpeechRecognition
+black
+spotipy

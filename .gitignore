@@ -10,3 +10,5 @@ test.py
 jarvis
 run_jarvis.sh
 testing
+play_spotify_song.py
+jarvis_voice_control.py

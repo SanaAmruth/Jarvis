@@ -1,132 +1,146 @@
-# JARVIS: Intelligent Voice Assistant
+# Jarvis Assistant Project
 
-JARVIS is a Python-based voice assistant designed to interact with users through voice commands and queries. It leverages multiple libraries and APIs for wake word detection, speech recognition, text-to-speech, and image-based query handling.
+## Overview
+This project implements a voice-activated assistant named **Jarvis**. It supports various functionalities, including:
+
+- **Wake Word Detection**: Listens for the wake word "Hey Jarvis."
+- **Speech Recognition**: Processes voice queries.
+- **Spotify Integration**: Pauses, plays, and searches for songs using the Spotify API.
+- **Image Capture**: Captures images via the system's camera.
+- **Query Processing**: Handles queries that may or may not require visual input using the Unify API.
 
 ---
 
 ## Features
 
-- **Wake Word Detection**: Activates on the command `Hey Jarvis` using the OpenWakeWord model.
-- **Speech Recognition**: Recognizes voice queries with the `speech_recognition` library.
-- **Text-to-Speech**: Responds audibly using the `pyttsx3` text-to-speech engine.
-- **Visual Query Processing**: Captures images using a camera for queries requiring visual context.
-- **Integration with Unify API**: Processes and answers queries using Unify's GPT-based models.
+- **Wake Word Detection**:
+  - Uses OpenWakeWord to listen for "Hey Jarvis."
+  - Automatically pauses Spotify playback when the wake word is detected.
+
+- **Speech Recognition**:
+  - Leverages Google Speech Recognition via the `speech_recognition` library to convert speech to text.
+
+- **Spotify Integration**:
+  - Search for songs and start playback on active devices.
+  - Pause playback when the wake word is detected.
+
+- **Image Capture**:
+  - Captures an image using OpenCV and sends it for query analysis if required.
+
+- **Query Processing**:
+  - Determines if a query needs visual input using the Unify API.
+  - Processes textual or visual queries and provides answers.
 
 ---
 
 ## Prerequisites
 
-Ensure you have the following installed and configured:
-
-1. **Python 3.7 or higher**
-2. **Required Python Libraries**:
-   Install these using `pip`:
-   ```bash
-   pip install pyttsx3 opencv-python numpy openwakeword pyaudio python-dotenv speechrecognition unify
-   ```
-3. **Unify API Key**:
-   Add your Unify API key to a `.env` file in the project directory:
-   ```env
-   API_KEY=your_api_key_here
-   ```
-4. **ONNX Wake Word Model**:
-   Ensure the file `hey_jarvis_v0.1.onnx` is present in the project directory.
+- **Python**: Python 3.10
+- **Spotify Account**: A Spotify Premium account
+- **Unify API Key**: Obtain a Unify API key(50$ free credits will be given while creating account) to process queries
 
 ---
 
-## Project Structure
+## Setup
 
-JARVIS follows a modular directory structure:
+### 1. Clone the Repository
+```bash
+git clone <repository-url>
+cd <repository-folder>
+```
 
-- `jarvis_voice_control.py`: Main script for running the assistant.
-- `hey_jarvis_v0.1.onnx`: Model file for wake word detection.
-- `requirements.txt`: Dependencies file listing all required Python libraries.
-- `run_jarvis.sh`: Optional shell script for activation.
-- `test.py`: Optional script for component testing.
-- `captured_image.jpg`: Temporary file for visual query images.
-- `.env`: Environment file storing the API key securely.
+### 2. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
 
----
+### 3. Environment Variables
+Create a `.env` file in the root directory and define the following variables:
 
-## How It Works
+```env
+UNIFY_API_KEY=<your_unify_api_key>
+CLIENT_ID=<your_spotify_client_id>
+CLIENT_SECRET=<your_spotify_client_secret>
+REDIRECT_URI=<your_redirect_uri>
+```
 
-1. **Startup**:
-   - The system initializes the wake word detection model, text-to-speech engine, and microphone input.
-
-2. **Wake Word Detection**:
-   - Continuously listens for the wake word (`Hey Jarvis`).
-
-3. **Query Handling**:
-   - Prompts the user for a query upon detecting the wake word.
-   - Determines whether the query requires visual input.
-   - Processes queries using the Unify API (text-only or text-with-image).
-
-4. **Response**:
-   - Speaks the response back to the user via text-to-speech.
-
----
-
-## Usage
-
-To use JARVIS:
-
-1. **Activate JARVIS**:
-   Run the main script using:
-   ```bash
-   python jarvis_voice_control.py
-   ```
-
-2. **Interact**:
-   - Trigger the assistant by saying "Hey Jarvis."
-   - Follow with your query when prompted.
-   - Example queries:
-     - "What is the weather today?"
-     - "What is this object?" (requires image capture).
+### 4. Download Wake Word Models
+```python
+import openwakeword as oww
+oww.utils.download_models(['Hey Jarvis'])
+```
 
 ---
 
-## Configuration Options
+## Running the Project
 
-Adjust the following settings in `jarvis_voice_control.py`:
+To start the assistant, execute the following command:
+```bash
+python jarvis.py
+```
 
-- **Wake Word**: Modify the `WAKE_WORD` variable to change the activation phrase.
-- **Audio Input Device**: Set `AUDIO_DEVICE_INDEX` for a specific microphone.
-- **Text-to-Speech Voice**: Tweak properties like rate, volume, or voice in the `tts_engine`.
+---
+
+## Functionality Breakdown
+
+### 1. Wake Word Detection
+- Listens for "Hey Jarvis" using OpenWakeWord.
+- When detected, pauses Spotify playback.
+
+### 2. Speech Recognition
+- After detecting the wake word, listens for the user’s query.
+- Converts voice input to text using Google Speech Recognition.
+
+### 3. Spotify Integration
+- **Pause Playback**: Automatically pauses playback when the wake word is detected.
+- **Search and Play**: Extracts the song name from queries like "Play [song name]." Searches and plays the song on the active Spotify device.
+
+### 4. Image Capture
+- Captures an image using OpenCV if a query requires visual input.
+
+### 5. Query Processing
+- Uses the Unify API to determine if a query requires visual input.
+- Processes the query and responds using text-to-speech.
+
+---
+
+## Code Structure
+
+- `jarvis.py`: Entry point of the application.
+- `requirements.txt`: Contains all dependencies.
+
+---
+
+## Key Libraries
+
+- **OpenWakeWord**: For wake word detection.
+- **SpeechRecognition**: For voice-to-text conversion.
+- **Spotipy**: For Spotify API interaction.
+- **Unify API**: For query processing and visual query handling.
+- **OpenCV**: For capturing images.
 
 ---
 
 ## Troubleshooting
 
-Common issues and solutions:
+1. **Spotify Playback Issues**:
+   - Ensure Spotify is running and connected to an active device.
+   - Check that the Spotify client ID, secret, and redirect URI are correct.
 
-1. **Wake Word Detection Fails**:
-   - Verify the presence of `hey_jarvis_v0.1.onnx` in the correct directory.
-   - Check that the microphone permissions are enabled.
+2. **Wake Word Not Detected**:
+   - Ensure the wake word model is correctly downloaded and set up.
 
-2. **No API Response**:
-   - Confirm the API key in `.env` is valid.
-   - Ensure internet connectivity is stable.
-
-3. **Speech Recognition Errors**:
-   - Update the `AUDIO_DEVICE_INDEX` for the intended microphone.
-
-4. **Pyaudio Installation Issues**:
-   - For Linux systems:
-     ```bash
-     sudo apt-get install portaudio19-dev python3-pyaudio
-     ```
+3. **Environment Variables Not Loaded**:
+   - Confirm that the `.env` file is present and correctly configured.
 
 ---
 
-## Future Enhancements
-
-Planned upgrades include:
-
-- Advanced image query handling using multimodal models
-- Play songs like Alexa
+## Contributing
+Contributions are welcome! Fork the repository, make your changes, and create a pull request.
 
 ---
 
 ## License
+This project is licensed under the MIT License.
 
-This project is licensed under the MIT License. Feel free to use, modify, and share it.
+---
