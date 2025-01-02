@@ -25,13 +25,14 @@ api_key = os.getenv("UNIFY_API_KEY")
 # Configuration
 UNIFY_API_KEY = api_key
 WAKE_WORD = "Hey Jarvis"
-AUDIO_DEVICE_INDEX = None
-BLUETOOTH_DEVICE_NAME = "Sana's mac microphone"
+AUDIO_DEVICE_INDEX = int(
+    os.getenv("AUDIO_DEVICE_INDEX", 0)
+)  # Default to system default device
 
 # Initialize text-to-speech engine
 tts_engine = pyttsx3.init()
-tts_engine.setProperty("rate", 172)
-tts_engine.setProperty("volume", 0.9)
+tts_engine.setProperty("rate", int(os.getenv("TTS_RATE", 172)))
+tts_engine.setProperty("volume", float(os.getenv("TTS_VOLUME", 0.9)))
 
 # Set model path
 model_path = "hey jarvis"
@@ -45,26 +46,33 @@ CHANNELS = 1
 RATE = 16000
 CHUNK_SIZE = 1280
 audio = pyaudio.PyAudio()
-mic_stream = audio.open(
-    format=FORMAT,
-    channels=CHANNELS,
-    rate=RATE,
-    input=True,
-    frames_per_buffer=CHUNK_SIZE,
-)
+
+try:
+    mic_stream = audio.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK_SIZE,
+        input_device_index=AUDIO_DEVICE_INDEX if AUDIO_DEVICE_INDEX >= 0 else None,
+    )
+except Exception as e:
+    print(f"Error initializing microphone: {e}")
+    raise
 
 # Initialize Spotify API client
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
 SCOPE = "user-library-read user-read-playback-state user-modify-playback-state"
+
 sp = spotipy.Spotify(
     auth_manager=SpotifyOAuth(
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
         redirect_uri=REDIRECT_URI,
         scope=SCOPE,
-        cache_path=None,
+        cache_path=os.getenv("SPOTIFY_CACHE_PATH", None),
     )
 )
 
@@ -78,12 +86,10 @@ def speak(text):
 def pause_playback():
     """Pause playback if a song is playing."""
     try:
-        # Get the current playback state
         playback_state = sp.current_playback()
 
         if playback_state and playback_state["is_playing"]:
             sp.pause_playback()
-
     except Exception as e:
         print(f"Error while pausing playback: {e}")
 
@@ -97,9 +103,10 @@ def detect_wake_word():
         oww_model.predict(audio_data)
 
         del raw_data
+        del audio_data
 
         for mdl in oww_model.prediction_buffer.keys():
-            if oww_model.prediction_buffer[mdl][-1] > 0.3:
+            if oww_model.prediction_buffer[mdl][-1] > 0.4:
                 oww_model.prediction_buffer[mdl].clear()
                 print("Wake word detected!")
 
@@ -114,7 +121,7 @@ def capture_image():
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
     if ret:
-        image_path = "captured_image.jpg"
+        image_path = os.path.join(os.getcwd(), "captured_image.jpg")
         cv2.imwrite(image_path, frame)
         cap.release()
         return image_path
@@ -183,7 +190,6 @@ def process_query(query, image_path=None):
 
 def search_and_play(song_name):
     """Search and play song using Spotify API."""
-    # Check if Spotify is running, if not open it
     try:
         subprocess.run(
             ["pgrep", "-x", "Spotify"],
@@ -193,9 +199,8 @@ def search_and_play(song_name):
         )
     except subprocess.CalledProcessError:
         print("Spotify is not running. Opening Spotify...")
-        subprocess.Popen(["open", "/Applications/Spotify.app"])
+        subprocess.Popen(["open", os.getenv("SPOTIFY_PATH", "Spotify")])
 
-    # Search for the song
     results = sp.search(q=song_name, limit=10, type="track")
     if results["tracks"]["items"]:
         track = results["tracks"]["items"][0]
@@ -220,21 +225,15 @@ def search_and_play(song_name):
 
 def is_song_query(query):
     """Check if the query mentions a song."""
-    song_keywords = ["play"]
     return query.lower().split()[0] == "play"
-    # return any(keyword in query.lower() for keyword in song_keywords)
 
 
 def main():
     global mic_stream
     while True:
         try:
-            # Detect the wake word
             detect_wake_word()
 
-            # sp.pause_playback()
-
-            # Use the recognizer to listen for the query
             recognizer = sr.Recognizer()
             with sr.Microphone(device_index=AUDIO_DEVICE_INDEX) as source:
                 print("Listening for query...")
@@ -244,21 +243,16 @@ def main():
                     print(f"Query: {query}")
 
                     if is_song_query(query):
-                        song_name = query  # You can enhance this by extracting song name more accurately
-                        search_and_play(song_name)
-
+                        search_and_play(query)
                     elif is_visual_query(query):
                         image_path = capture_image()
-                        response = process_query(query, image_path)
+                        process_query(query, image_path)
                     else:
-                        response = process_query(query)
-
+                        process_query(query)
                 except Exception as e:
-                    # print(f"Error recognizing speech: {e}")
-                    continue
+                    print(f"Error recognizing speech: {e}")
         except Exception as e:
             print(f"Error in main loop: {e}")
-            continue
 
 
 if __name__ == "__main__":
