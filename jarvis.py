@@ -7,23 +7,29 @@ from dotenv import load_dotenv
 import openwakeword as oww
 from openwakeword.model import Model
 import pyaudio
-import unify
 import speech_recognition as sr
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import subprocess
 
+# Import Google GenAI SDK
+import google.generativeai as genai
+
 # Load environment variables
 load_dotenv()
 
-# Download models needed for tests
+# Download models needed for tests (for OpenWakeWord)
 oww.utils.download_models(["Hey Jarvis"])
 
-# Access the API key
-api_key = os.getenv("UNIFY_API_KEY")
+# Access the API key for Google Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable not set.")
+
+# Configure Google Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
 
 # Configuration
-UNIFY_API_KEY = api_key
 WAKE_WORD = "Hey Jarvis"
 AUDIO_DEVICE_INDEX = int(
     os.getenv("AUDIO_DEVICE_INDEX", 0)
@@ -34,7 +40,7 @@ tts_engine = pyttsx3.init()
 tts_engine.setProperty("rate", int(os.getenv("TTS_RATE", 172)))
 tts_engine.setProperty("volume", float(os.getenv("TTS_VOLUME", 0.9)))
 
-# Set model path
+# Set model path for OpenWakeWord
 model_path = "hey jarvis"
 
 # Initialize OpenWakeWord model
@@ -119,6 +125,10 @@ def detect_wake_word():
 def capture_image():
     """Capture an image using the device camera."""
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open camera.")
+        return None
+
     ret, frame = cap.read()
     if ret:
         image_path = os.path.join(os.getcwd(), "captured_image.jpg")
@@ -131,61 +141,69 @@ def capture_image():
 
 
 def is_visual_query(query):
-    """Determine if the query requires visual input using Unify API."""
+    """Determine if the query requires visual input using Google Gemini (text-only model)."""
     print(f"Checking if visual information is needed for query: {query}")
     try:
-        client = unify.Unify("gpt-4o-mini@openai", api_key=UNIFY_API_KEY)
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"You have the capability to get the image if needed to answer the query. Does the following query need an image to answer?\nQuery: {query}\nRespond with 'Yes' or 'No'",
-                    }
-                ],
-            }
-        ]
-
-        response = client.generate(messages=messages, max_completion_tokens=1)
-        print(f"Visual query decision: {response}")
-        return "Yes" in response
+        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
+        prompt = f"Given the following query, does it require an image to answer? Respond with 'Yes' or 'No'.\nQuery: {query}"
+        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(
+            temperature=0.1,  # Keep temperature low for direct answers
+            max_output_tokens=5 # Just enough for "Yes" or "No"
+        ))
+        
+        # Accessing the text from the response object
+        response_text = response.text.strip().lower()
+        print(f"Visual query decision: {response_text}")
+        return "yes" in response_text
     except Exception as e:
-        print(f"Error checking visual query: {e}")
+        print(f"Error checking visual query with Gemini: {e}")
         return False
 
 
 def process_query(query, image_path=None):
-    """Process the query using Unify API."""
-    client = unify.Unify("gpt-4o-mini@openai", api_key=UNIFY_API_KEY)
-    messages = [{"role": "system", "content": "Provide precise and accurate answers."}]
+    """Process the query using Google Gemini API."""
+    messages = []
 
     if image_path:
-        with open(image_path, "rb") as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": query},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"},
-                    },
-                ],
+        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
+        try:
+            # Read the image and create a BytesPart
+            img = {
+                'mime_type': 'image/jpeg',
+                'data': open(image_path, 'rb').read()
             }
-        )
-        os.remove(image_path)
+            messages.append(img)
+            messages.append(query) # Text part of the multimodal prompt
+            
+            response = model.generate_content(messages, generation_config=genai.types.GenerationConfig(
+                max_output_tokens=150
+            ))
+            
+            # Remove the captured image after processing
+            os.remove(image_path)
+        except Exception as e:
+            print(f"Error processing image with Gemini: {e}")
+            # Fallback to text-only if image processing fails
+            response = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17').generate_content(query, generation_config=genai.types.GenerationConfig(
+                max_output_tokens=150
+            ))
+            speak("I had trouble processing the image, but I'll try to answer based on your words.")
     else:
-        messages.append({"role": "user", "content": [{"type": "text", "text": query}]})
+        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
+        response = model.generate_content(query, generation_config=genai.types.GenerationConfig(
+            max_output_tokens=150
+        ))
 
     try:
-        response = client.generate(messages=messages, max_completion_tokens=150)
-        print(f"Response: {response}")
-        speak(response)
-        return response
+        response_text = response.text
+        print(f"Response: {response_text}")
+        speak(response_text)
+        return response_text
     except Exception as e:
-        return f"Error processing query: {e}"
+        error_message = f"Error generating response from Gemini: {e}"
+        print(error_message)
+        speak("I'm sorry, I couldn't process that request right now.")
+        return error_message
 
 
 def search_and_play(song_name):
@@ -199,7 +217,10 @@ def search_and_play(song_name):
         )
     except subprocess.CalledProcessError:
         print("Spotify is not running. Opening Spotify...")
-        subprocess.Popen(["open", os.getenv("SPOTIFY_PATH", "Spotify")])
+        # Adjust this command for your OS if needed. 'open' is for macOS.
+        # For Windows: 'start spotify:'
+        # For Linux: 'spotify' or 'xdg-open spotify:'
+        subprocess.Popen(["open", os.getenv("SPOTIFY_PATH", "/Applications/Spotify.app")]) # Example for macOS
 
     results = sp.search(q=song_name, limit=10, type="track")
     if results["tracks"]["items"]:
@@ -216,16 +237,20 @@ def search_and_play(song_name):
         if active_device:
             device_id = active_device["id"]
             sp.start_playback(device_id=device_id, uris=[track_uri])
+            speak(f"Playing: {track_name} by {track_artist}")
             print(f"Playing: {track_name} by {track_artist}")
         else:
+            speak("No active Spotify device found. Please make sure Spotify is open and playing on a device.")
             print("No active device found.")
     else:
+        speak(f"Sorry, I couldn't find any song called {song_name}.")
         print("No song found.")
 
 
 def is_song_query(query):
     """Check if the query mentions a song."""
-    return query.lower().split()[0] == "play"
+    # A more robust check might involve NLP, but for simplicity, checking the first word.
+    return query.lower().startswith("play")
 
 
 def main():
@@ -237,22 +262,40 @@ def main():
             recognizer = sr.Recognizer()
             with sr.Microphone(device_index=AUDIO_DEVICE_INDEX) as source:
                 print("Listening for query...")
-                audio = recognizer.listen(source)
+                # Adjust for ambient noise once before listening for the command
+                recognizer.adjust_for_ambient_noise(source) 
+                audio = recognizer.listen(source, timeout=5, phrase_time_limit=5) # Add timeout and phrase_time_limit
                 try:
                     query = recognizer.recognize_google(audio)
                     print(f"Query: {query}")
 
                     if is_song_query(query):
-                        search_and_play(query)
+                        # Extract song name (simple approach, can be improved with more NLP)
+                        song_name = query[len("play"):].strip() 
+                        search_and_play(song_name)
                     elif is_visual_query(query):
+                        speak("Please give me a moment to capture the image.")
                         image_path = capture_image()
-                        process_query(query, image_path)
+                        if image_path:
+                            process_query(query, image_path)
+                        else:
+                            speak("I couldn't capture an image. Please try again.")
                     else:
                         process_query(query)
+                except sr.UnknownValueError:
+                    print("Google Speech Recognition could not understand audio")
+                    speak("Sorry, I didn't catch that. Could you please repeat?")
+                except sr.RequestError as e:
+                    print(f"Could not request results from Google Speech Recognition service; {e}")
+                    speak("I'm having trouble connecting to the speech recognition service.")
                 except Exception as e:
-                    print(f"Error recognizing speech: {e}")
+                    print(f"An unexpected error occurred during query processing: {e}")
+                    speak("Something went wrong. Please try again.")
         except Exception as e:
             print(f"Error in main loop: {e}")
+            # Consider a short delay before retrying the main loop to prevent rapid error looping
+            # import time
+            # time.sleep(1)
 
 
 if __name__ == "__main__":
