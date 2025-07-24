@@ -1,58 +1,61 @@
 import os
-import base64
-import pyttsx3
+import subprocess
 import cv2
+import google.generativeai as genai
 import numpy as np
-from dotenv import load_dotenv
 import openwakeword as oww
-from openwakeword.model import Model
 import pyaudio
+import pyttsx3
 import speech_recognition as sr
 import spotipy
+from dotenv import load_dotenv
+from openwakeword.model import Model
 from spotipy.oauth2 import SpotifyOAuth
-import subprocess
 
-# Import Google GenAI SDK
-import google.generativeai as genai
-
-# Load environment variables
+# --- Configuration ---
+# Load environment variables from .env file
 load_dotenv()
 
-# Download models needed for tests (for OpenWakeWord)
-oww.utils.download_models(["Hey Jarvis"])
+# Wake Word Configuration
+WAKE_WORD_MODEL = "hey_jarvis" # Use the standard model name from openwakeword
 
-# Access the API key for Google Gemini
+# Audio Input Configuration (based on your MacBook Pro Microphone)
+AUDIO_DEVICE_INDEX = int(os.getenv("AUDIO_DEVICE_INDEX", 2)) # Default to Device ID 2
+CHANNELS = 1 # Your microphone requires 1 channel (mono)
+RATE = 16000
+CHUNK_SIZE = 1280
+FORMAT = pyaudio.paInt16
+
+# Text-to-Speech Configuration
+TTS_RATE = int(os.getenv("TTS_RATE", 172))
+TTS_VOLUME = float(os.getenv("TTS_VOLUME", 0.9))
+
+# --- Initialization ---
+
+# Download wake word model if needed
+print("Downloading wake word model...")
+oww.utils.download_models([WAKE_WORD_MODEL])
+
+# Initialize OpenWakeWord model
+print("Initializing wake word model...")
+oww_model = Model(wakeword_models=[WAKE_WORD_MODEL], inference_framework="onnx")
+
+# Initialize Google Gemini API
+print("Initializing Google Gemini API...")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set.")
-
-# Configure Google Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Configuration
-WAKE_WORD = "Hey Jarvis"
-AUDIO_DEVICE_INDEX = int(
-    os.getenv("AUDIO_DEVICE_INDEX", 0)
-)  # Default to system default device
-
 # Initialize text-to-speech engine
+print("Initializing text-to-speech engine...")
 tts_engine = pyttsx3.init()
-tts_engine.setProperty("rate", int(os.getenv("TTS_RATE", 172)))
-tts_engine.setProperty("volume", float(os.getenv("TTS_VOLUME", 0.9)))
+tts_engine.setProperty("rate", TTS_RATE)
+tts_engine.setProperty("volume", TTS_VOLUME)
 
-# Set model path for OpenWakeWord
-model_path = "hey jarvis"
-
-# Initialize OpenWakeWord model
-oww_model = Model(wakeword_models=[model_path], inference_framework="onnx")
-
-# Setup for audio streaming
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 16000
-CHUNK_SIZE = 1280
+# Initialize audio stream for wake word detection
+print("Initializing audio stream...")
 audio = pyaudio.PyAudio()
-
 try:
     mic_stream = audio.open(
         format=FORMAT,
@@ -60,98 +63,92 @@ try:
         rate=RATE,
         input=True,
         frames_per_buffer=CHUNK_SIZE,
-        input_device_index=AUDIO_DEVICE_INDEX if AUDIO_DEVICE_INDEX >= 0 else None,
+        input_device_index=AUDIO_DEVICE_INDEX,
     )
 except Exception as e:
-    print(f"Error initializing microphone: {e}")
+    print(f"FATAL ERROR: Could not initialize microphone. {e}")
+    print("Please run the check_devices.py script to find the correct AUDIO_DEVICE_INDEX.")
     raise
 
 # Initialize Spotify API client
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REDIRECT_URI = os.getenv("REDIRECT_URI")
-SCOPE = "user-library-read user-read-playback-state user-modify-playback-state"
-
-sp = spotipy.Spotify(
-    auth_manager=SpotifyOAuth(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        redirect_uri=REDIRECT_URI,
-        scope=SCOPE,
-        cache_path=os.getenv("SPOTIFY_CACHE_PATH", None),
+print("Initializing Spotify client...")
+try:
+    sp = spotipy.Spotify(
+        auth_manager=SpotifyOAuth(
+            client_id=os.getenv("CLIENT_ID"),
+            client_secret=os.getenv("CLIENT_SECRET"),
+            redirect_uri=os.getenv("REDIRECT_URI"),
+            scope="user-library-read user-read-playback-state user-modify-playback-state",
+            cache_path=os.getenv("SPOTIFY_CACHE_PATH"),
+        )
     )
-)
+    # Perform a test API call to trigger authentication if needed
+    sp.current_user()
+except Exception as e:
+    print(f"Could not initialize Spotify client: {e}")
+    sp = None
 
+print("\n--- Jarvis is ready ---")
+
+# --- Core Functions ---
 
 def speak(text):
     """Convert text to speech."""
-    tts_engine.say(text)
-    tts_engine.runAndWait()
-
+    try:
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+    except Exception as e:
+        print(f"Error in speak function: {e}")
 
 def pause_playback():
-    """Pause playback if a song is playing."""
+    """Pause Spotify playback if a song is playing."""
+    if not sp:
+        return
     try:
         playback_state = sp.current_playback()
-
         if playback_state and playback_state["is_playing"]:
             sp.pause_playback()
     except Exception as e:
         print(f"Error while pausing playback: {e}")
 
-
 def detect_wake_word():
     """Detect the wake word using OpenWakeWord."""
-    print("Listening for wake word...")
+    print(f"\nListening for wake word '{WAKE_WORD_MODEL}'...")
     while True:
         raw_data = mic_stream.read(CHUNK_SIZE, exception_on_overflow=False)
         audio_data = np.frombuffer(raw_data, dtype=np.int16)
-        oww_model.predict(audio_data)
+        prediction = oww_model.predict(audio_data)
 
-        del raw_data
-        del audio_data
-
-        for mdl in oww_model.prediction_buffer.keys():
-            if oww_model.prediction_buffer[mdl][-1] > 0.4:
-                oww_model.prediction_buffer[mdl].clear()
-                print("Wake word detected!")
-
-                # Pause playback when wake word is detected
-                pause_playback()
-
-                return
-
+        # Check for wake word detection
+        if prediction[WAKE_WORD_MODEL] > 0.5:
+            print("Wake word detected!")
+            oww_model.reset()
+            pause_playback()
+            return
 
 def capture_image():
     """Capture an image using the device camera."""
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Error: Could not open camera.")
+        speak("I could not open the camera.")
         return None
-
     ret, frame = cap.read()
+    cap.release()
     if ret:
         image_path = os.path.join(os.getcwd(), "captured_image.jpg")
         cv2.imwrite(image_path, frame)
-        cap.release()
         return image_path
     else:
-        cap.release()
-        raise RuntimeError("Failed to capture image.")
-
+        speak("I failed to capture an image.")
+        return None
 
 def is_visual_query(query):
-    """Determine if the query requires visual input using Google Gemini (text-only model)."""
-    print(f"Checking if visual information is needed for query: {query}")
+    """Determine if the query requires visual input."""
+    print(f"Checking if visual information is needed for query: '{query}'")
     try:
-        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
-        prompt = f"Given the following query, does it require an image to answer? Respond with 'Yes' or 'No'.\nQuery: {query}"
-        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(
-            temperature=0.1,  # Keep temperature low for direct answers
-            max_output_tokens=5 # Just enough for "Yes" or "No"
-        ))
-        
-        # Accessing the text from the response object
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        prompt = f"Does the following user query require an image to be answered accurately? Respond with only 'Yes' or 'No'.\nQuery: {query}"
+        response = model.generate_content(prompt)
         response_text = response.text.strip().lower()
         print(f"Visual query decision: {response_text}")
         return "yes" in response_text
@@ -159,144 +156,138 @@ def is_visual_query(query):
         print(f"Error checking visual query with Gemini: {e}")
         return False
 
-
 def process_query(query, image_path=None):
     """Process the query using Google Gemini API."""
-    messages = []
-
-    if image_path:
-        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
-        try:
-            # Read the image and create a BytesPart
-            img = {
-                'mime_type': 'image/jpeg',
-                'data': open(image_path, 'rb').read()
-            }
-            messages.append(img)
-            messages.append(query) # Text part of the multimodal prompt
-            
-            response = model.generate_content(messages, generation_config=genai.types.GenerationConfig(
-                max_output_tokens=150
-            ))
-            
-            # Remove the captured image after processing
-            os.remove(image_path)
-        except Exception as e:
-            print(f"Error processing image with Gemini: {e}")
-            # Fallback to text-only if image processing fails
-            response = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17').generate_content(query, generation_config=genai.types.GenerationConfig(
-                max_output_tokens=150
-            ))
-            speak("I had trouble processing the image, but I'll try to answer based on your words.")
-    else:
-        model = genai.GenerativeModel('models/gemini-2.5-flash-lite-preview-06-17')
-        response = model.generate_content(query, generation_config=genai.types.GenerationConfig(
-            max_output_tokens=150
-        ))
-
     try:
-        response_text = response.text
-        print(f"Response: {response_text}")
-        speak(response_text)
-        return response_text
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        response = None # Initialize response variable
+
+        if image_path:
+            print("Processing query with image...")
+            with open(image_path, 'rb') as f:
+                img_data = f.read()
+            img_part = {'mime_type': 'image/jpeg', 'data': img_data}
+            response = model.generate_content([query, img_part])
+            os.remove(image_path) # Clean up image
+        else:
+            print("Processing text-only query...")
+            response = model.generate_content(query)
+
+        # Unified response handling
+        if response:
+            response_text = response.text
+            print(f"Response: {response_text}")
+            speak(response_text)
+        else:
+            # This case would only happen if something went wrong before the API call
+            speak("I was unable to get a response. Please try again.")
+
     except Exception as e:
         error_message = f"Error generating response from Gemini: {e}"
         print(error_message)
-        speak("I'm sorry, I couldn't process that request right now.")
-        return error_message
+        speak("I'm sorry, I encountered an error while processing that request.")
+
+def open_spotify_if_not_running():
+    """Opens the Spotify app if it's not already running (for macOS)."""
+    try:
+        # This command checks if a process named "Spotify" exists
+        subprocess.run(["pgrep", "-x", "Spotify"], check=True, capture_output=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("Spotify is not running. Opening it now...")
+        # This command opens the Spotify application on macOS
+        subprocess.Popen(["open", "/Applications/Spotify.app"])
+        # Give Spotify a moment to launch before we try to use it
+        import time
+        time.sleep(5)
 
 
 def search_and_play(song_name):
-    """Search and play song using Spotify API."""
+    """Search and play a song using Spotify, activating a device if necessary."""
+    if not sp:
+        speak("Spotify is not configured. I can't play music.")
+        return
+
+    # 1. Make sure Spotify is running
+    open_spotify_if_not_running()
+
+    # 2. Search for the song
+    print(f"Searching for song: {song_name}")
+    results = sp.search(q=song_name, limit=1, type="track")
+    if not results["tracks"]["items"]:
+        speak(f"Sorry, I couldn't find a song called {song_name}.")
+        return
+
+    track = results["tracks"]["items"][0]
+    track_uri = track["uri"]
+    track_name = track["name"]
+    track_artist = track["artists"][0]["name"]
+
+    # 3. Find an available device and start playback
     try:
-        subprocess.run(
-            ["pgrep", "-x", "Spotify"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except subprocess.CalledProcessError:
-        print("Spotify is not running. Opening Spotify...")
-        # Adjust this command for your OS if needed. 'open' is for macOS.
-        # For Windows: 'start spotify:'
-        # For Linux: 'spotify' or 'xdg-open spotify:'
-        subprocess.Popen(["open", os.getenv("SPOTIFY_PATH", "/Applications/Spotify.app")]) # Example for macOS
-
-    results = sp.search(q=song_name, limit=10, type="track")
-    if results["tracks"]["items"]:
-        track = results["tracks"]["items"][0]
-        track_uri = track["uri"]
-        track_name = track["name"]
-        track_artist = track["artists"][0]["name"]
-
         devices = sp.devices()
-        active_device = next(
-            (device for device in devices["devices"] if device["is_active"]), None
-        )
+        if not devices['devices']:
+            speak("No Spotify devices found. Please open Spotify on one of your devices.")
+            return
 
-        if active_device:
-            device_id = active_device["id"]
-            sp.start_playback(device_id=device_id, uris=[track_uri])
-            speak(f"Playing: {track_name} by {track_artist}")
-            print(f"Playing: {track_name} by {track_artist}")
-        else:
-            speak("No active Spotify device found. Please make sure Spotify is open and playing on a device.")
-            print("No active device found.")
-    else:
-        speak(f"Sorry, I couldn't find any song called {song_name}.")
-        print("No song found.")
+        # Prefer a computer, otherwise take the first available device
+        device_id = next((d['id'] for d in devices['devices'] if d['type'] == 'Computer'), None)
+        if not device_id:
+            device_id = devices['devices'][0]['id']
+
+        # 4. Start playback on the chosen device
+        sp.start_playback(device_id=device_id, uris=[track_uri])
+        speak(f"Playing {track_name} by {track_artist}.")
+
+    except Exception as e:
+        print(f"Error with Spotify playback: {e}")
+        speak("I had trouble playing the song. Please ensure Spotify is running and you are logged in.")
 
 
 def is_song_query(query):
-    """Check if the query mentions a song."""
-    # A more robust check might involve NLP, but for simplicity, checking the first word.
-    return query.lower().startswith("play")
-
+    """Check if the query is a request to play a song."""
+    query = query.lower()
+    return query.startswith("play") or "play the song" in query
 
 def main():
-    global mic_stream
+    """Main loop for the assistant."""
     while True:
         try:
             detect_wake_word()
+            speak("Yes?")
 
             recognizer = sr.Recognizer()
             with sr.Microphone(device_index=AUDIO_DEVICE_INDEX) as source:
-                print("Listening for query...")
-                # Adjust for ambient noise once before listening for the command
-                recognizer.adjust_for_ambient_noise(source) 
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=5) # Add timeout and phrase_time_limit
+                print("Listening for your command...")
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 try:
-                    query = recognizer.recognize_google(audio)
+                    audio_command = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                    query = recognizer.recognize_google(audio_command)
                     print(f"Query: {query}")
 
                     if is_song_query(query):
-                        # Extract song name (simple approach, can be improved with more NLP)
-                        song_name = query[len("play"):].strip() 
+                        song_name = query.lower().replace("play", "").strip()
                         search_and_play(song_name)
                     elif is_visual_query(query):
-                        speak("Please give me a moment to capture the image.")
+                        speak("Let me take a look.")
                         image_path = capture_image()
                         if image_path:
                             process_query(query, image_path)
-                        else:
-                            speak("I couldn't capture an image. Please try again.")
                     else:
                         process_query(query)
-                except sr.UnknownValueError:
-                    print("Google Speech Recognition could not understand audio")
-                    speak("Sorry, I didn't catch that. Could you please repeat?")
-                except sr.RequestError as e:
-                    print(f"Could not request results from Google Speech Recognition service; {e}")
-                    speak("I'm having trouble connecting to the speech recognition service.")
-                except Exception as e:
-                    print(f"An unexpected error occurred during query processing: {e}")
-                    speak("Something went wrong. Please try again.")
-        except Exception as e:
-            print(f"Error in main loop: {e}")
-            # Consider a short delay before retrying the main loop to prevent rapid error looping
-            # import time
-            # time.sleep(1)
 
+                except sr.WaitTimeoutError:
+                    speak("I didn't hear anything. Please try again.")
+                except sr.UnknownValueError:
+                    speak("I'm sorry, I didn't catch that.")
+                except sr.RequestError as e:
+                    speak("I'm having trouble connecting to the speech service.")
+                    print(f"Speech recognition request error: {e}")
+
+        except Exception as e:
+            print(f"An error occurred in the main loop: {e}")
+            speak("Something went wrong. I'll need to restart.")
+            # In a real-world scenario, you might want to break or add a delay
+            # break
 
 if __name__ == "__main__":
     main()

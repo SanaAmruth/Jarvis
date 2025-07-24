@@ -1,14 +1,24 @@
-unifyai
+# unifyai
+# pyttsx3
+# opencv-python
+# numpy
+# python-dotenv
+# openwakeword
+# pyaudio
+# argparse
+# tensorflow
+# transformers
+# bitsandbytes
+# SpeechRecognition
+# black
+# spotipy
+
+python-dotenv
 pyttsx3
 opencv-python
 numpy
-python-dotenv
 openwakeword
 pyaudio
-argparse
-tensorflow
-transformers
-bitsandbytes
 SpeechRecognition
-black
 spotipy
+google-generativeai
